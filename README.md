@@ -1,6 +1,7 @@
 # Quickproject
 
 [![Build Status](http://img.shields.io/travis/nlamirault/quickproject.svg)](https://travis-ci.org/nlamirault/quickproject)
+[![Build Status](https://drone.io/github.com/nlamirault/cl-cloudstack-client/status.png)](https://drone.io/github.com/nlamirault/cl-cloudstack-client/latest)
 
 
 ## Description
