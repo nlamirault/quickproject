@@ -37,7 +37,7 @@
 
 
 (define-test cant-create-project-with-directory-existing
-  (let ((path #p"/tmp/bar/"))
+  (let ((path #p"/tmp/drone/"))
     (ensure-directories-exist path)
     (assert-error 'file-error (make-project path))))
 
