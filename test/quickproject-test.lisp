@@ -150,4 +150,4 @@
   (with-project (name path)
     (let ((project-file (make-project-file path (format nil "~A-test.asd" name))))
       (assert-true
-       (search-token-into-file ":module :ttest" project-file)))))
+       (search-token-into-file ":module :test" project-file)))))
