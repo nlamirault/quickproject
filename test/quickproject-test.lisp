@@ -31,7 +31,7 @@
    filename))
 
 (define-test cant-create-project-directory-with-invalid-path
-  (let ((path #p"/foo/bar/"))
+  (let ((path #p"/dev/random/foo/"))
     (assert-error 'file-error (make-project path))
     (assert-false (cl-fad:directory-exists-p path))))
 
