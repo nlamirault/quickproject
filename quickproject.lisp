@@ -21,7 +21,7 @@
 string designator and upcased."
   (make-symbol (string-upcase name)))
 
-(defun write-system-form (name &key depends-on (stream *standard-output*))
+(defun write-system-form (name &key depends-on (stream *standard-output*) unit-test)
   "Write an asdf defsystem form for NAME to STREAM."
   (let ((*print-case* :downcase))
     (format stream "(asdf:defsystem ~S~%" (uninterned-symbolize name))
@@ -34,9 +34,12 @@ string designator and upcased."
       (format stream "  :depends-on (~{~S~^~%~15T~})~%"
               (mapcar #'uninterned-symbolize depends-on)))
     (format stream "  :components~%")
-    (format stream "  ((:module :src~%")
+    (if unit-test
+	(format stream "  ((:module :test~%")
+	(format stream "  ((:module :src~%"))
     (format stream "            :components ((:file \"package\")~%")
-    (format stream "                         (:file ~S)))~%" (string-downcase name))))
+    (format stream "                         (:file ~S)))))~%"
+	    (string-downcase name))))
 
 (defun pathname-project-name (pathname)
   "Return a project name based on PATHNAME by taking the last element
@@ -56,12 +59,13 @@ not already exist."
 (defun file-comment-header (stream)
   (format stream ";;;; ~A~%~%" (file-namestring stream)))
 
-(defun write-system-file (name file &key depends-on)
+(defun write-system-file (name file &key depends-on unit-test)
   (with-new-file (stream file)
     (file-comment-header stream)
     (write-system-form name
                        :depends-on depends-on
-                       :stream stream)
+                       :stream stream
+		       :unit-test unit-test)
     (terpri stream)))
 
 (defun write-readme-file (name file)
@@ -99,7 +103,50 @@ not already exist."
     (format stream "(in-package ~S-test)~%~%" (uninterned-symbolize name))
     (format stream ";;; ~S goes here. Hacks and glory await!~%~%" name)))
 
+(defun write-ci-quicklisp-file (file)
+  (with-new-file (stream file)
+    (file-comment-header stream)
+    (format stream "(load \"./quicklisp.lisp\")~%")
+    (format stream "(handler-case")
+    (format stream "     (quicklisp-quickstart:install :path \"./.quicklisp\")")
+    (format stream "  (simple-error (e)")
+    (format stream "     (format t \"Warning: ~s\" e)))" "~s")
+    (format stream "(load \"./.quicklisp/setup.lisp\")")))
 
+(defun write-ci-loading-project (name file)
+  (with-new-file (stream file)
+    (file-comment-header stream)
+    (format stream "(in-package :cl-user)~%")
+    (format stream "(load \".clenv/.quicklisp/setup.lisp\")~%")
+    (format stream "(ql:quickload ~S)~%" name)
+    (format stream "(ql:quickload \"~A-test\")~%~%" name)
+    (format stream ";;; Run unit tests here for ~A~%" name)))
+
+(defun write-ci-script (name file)
+   (with-new-file (stream file)
+     (format stream "#!/bin/bash~%~%")
+     (format stream "SCRIPT_HOME=`dirname $0`~%")
+     (format stream "PROJECT_HOME=$(dirname $SCRIPT_HOME)~%")
+     (format stream "PROJECT=~s~%" name)
+     (format stream "TEST_ENV=$PROJECT_HOME/.clenv~%")
+     (format stream "QUICKLISP_FILE=\"http://beta.quicklisp.org/quicklisp.lisp\"~%~%")
+     (format stream "cleanup() {~%")
+     (format stream "    echo \"cleanup $TEST_ENV\"~%")
+     (format stream "    rm -fr $TEST_ENV~%")
+     (format stream "    mkdir $TEST_ENV~%")
+     (format stream "}~%~%")
+     (format stream "init() {~%")
+     (format stream "   cp ci/init.lisp $TEST_ENV~%")
+     (format stream "   cd $TEST_ENV~%")
+     (format stream "   wget -q $QUICKLISP_FILE -O quicklisp.lisp~%")
+     (format stream "   sbcl --script init.lisp~%")
+     (format stream "   ln -s $PROJECT_HOME/.. ./.quicklisp/local-projects/$PROJECT~%")
+     (format stream "   cd ..~%")
+     (format stream "}~%~%")
+     (format stream "ci() {~%")
+     (format stream "   sbcl --script ci/$PROJECT-ci.lisp~%")
+     (format stream "}~%~%")
+     (format stream "cleanup~%init~%ci~%")))
 
 (defvar *after-make-project-hooks* nil
   "A list of functions to call after MAKE-PROJECT is finished making a
@@ -152,23 +199,25 @@ marker is the string \"\(#|\" and the template end marker is the string
   (apply 'append initial-parameters
          (mapcar 'funcall *template-parameter-functions*)))
 
-(defun make-project (pathname &key
-                     depends-on
-                     template-parameters
-                     ((:template-directory *template-directory*)
-                      *template-directory*)
-                     ((:author *author*) *author*)
-                     ((:license *license*) *license*)
-                     (name (pathname-project-name pathname) name-provided-p))
+(defun make-project (pathname &key depends-on
+				template-parameters
+				((:template-directory *template-directory*)
+				 *template-directory*)
+				((:author *author*) *author*)
+				((:license *license*) *license*)
+				ci
+				(name (pathname-project-name pathname)
+				      name-provided-p))
   "Create a project skeleton for NAME in PATHNAME. If DEPENDS-ON is provided,
 it is used as the asdf defsystem depends-on list."
   (when (pathname-name pathname)
-    ;;(warn "Coercing ~S to directory" pathname)
+    (warn "Coercing ~S to directory" pathname)
     (setf pathname (pathname-as-directory pathname))
     (unless name-provided-p
       (setf name (pathname-project-name pathname))))
   (let ((sources-pathname (pathname-as-directory (merge-pathnames pathname "src")))
-	(tests-pathname (pathname-as-directory (merge-pathnames pathname "test"))))
+	(tests-pathname (pathname-as-directory (merge-pathnames pathname "test")))
+	(ci-pathname (pathname-as-directory (merge-pathnames pathname "ci"))))
     (labels ((relative (directory file)
 	       (merge-pathnames file directory))
 	     (nametype (title directory type)
@@ -180,12 +229,15 @@ it is used as the asdf defsystem depends-on list."
       (write-system-file name (nametype name pathname "asd") :depends-on depends-on)
       (write-system-file (format nil "~A-test" name)
 			 (nametype (format nil "~A-test" name) pathname "asd")
-			 :depends-on depends-on)
+			 :depends-on (list name)
+			 :unit-test t)
       (ensure-directories-exist pathname)
       (write-package-file name (relative sources-pathname "package.lisp"))
       (write-application-file name (nametype name sources-pathname "lisp"))
       (write-package-test-file name (relative tests-pathname "package.lisp"))
-      (write-application-test-file name (nametype name tests-pathname "lisp"))
+      (write-application-test-file name
+				   (nametype (format nil "~A-test" name)
+					     tests-pathname "lisp"))
       (let ((*default-pathname-defaults* (truename pathname))
 	    (*name* name))
 	(when *template-directory*
@@ -196,4 +248,11 @@ it is used as the asdf defsystem depends-on list."
 	(dolist (hook *after-make-project-hooks*)
 	  (funcall hook pathname :depends-on depends-on :name name
 		   :allow-other-keys t)))
+      (when ci
+	(ensure-directories-exist ci-pathname)
+	(write-ci-quicklisp-file (relative ci-pathname "init.lisp"))
+	(write-ci-script name (relative ci-pathname (format nil "~A-ci.sh" name)))
+	(write-ci-loading-project name
+				  (relative ci-pathname (format nil "~A-ci.lisp" name)))
+	)
       name)))

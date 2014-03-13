@@ -5,6 +5,7 @@
 
 set -e
 set -x
+export PROJECT=$PROJECT
 export TEST_ENV=$PWD/.clenv
 
 cleanup() {
@@ -17,12 +18,12 @@ init() {
     cd $TEST_ENV
     wget -q http://beta.quicklisp.org/quicklisp.lisp -O quicklisp.lisp
     sbcl --script init.lisp
-    ln -s $PWD/.. ./.quicklisp/local-projects/quickproject
+    ln -s $PWD/.. ./.quicklisp/local-projects/$PROJECT
     cd ..
 }
 
 ci() {
-    sbcl --script ci/quickproject-ci.lisp
+    sbcl --script ci/$PROJECT-ci.lisp
 }
 
 cleanup
